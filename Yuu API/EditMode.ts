@@ -5,6 +5,7 @@ import { Events } from "./Events";
 import { grabbable, Hand } from "./Grabbable";
 import { Player } from "./Player";
 import { registerStart } from "./RegisterStart";
+import { scaleGizmo } from "./ScaleGizmo";
 
 
 // ============================================================================
@@ -27,6 +28,7 @@ type HandFlags = { Left: boolean, Right: boolean };
 const hands: Hand[] = ['Left', 'Right'];
 
 const dollyGain = 2.5;       // meters moved per meter of hand-spread change (zoom strength)
+const minZoomDist = 0.25;    // how close (m) you can zoom toward the object
 const maxStep = 0.3;         // ignore implausible per-frame position jumps (m)
 const maxTwist = 1.0;        // ignore implausible per-frame twists (radians)
 
@@ -144,11 +146,13 @@ function onPhysicsUpdate(deltaTime: number): void {
     return;
   }
 
-  // The fix: while a hand is holding an object, gripping does NOT move you, so
-  // grabbing or two-hand stretching an object can't fling the camera.
-  const holdingObject = grabbable.heldEntity('Left') !== undefined || grabbable.heldEntity('Right') !== undefined;
+  // While manipulating an object - holding it, or dragging a resize handle -
+  // gripping does NOT move you, so grabbing/stretching can't fling the camera.
+  const busy = grabbable.heldEntity('Left') !== undefined
+    || grabbable.heldEntity('Right') !== undefined
+    || scaleGizmo.isDragging();
 
-  const gripping = holdingObject ? [] : hands.filter((hand) => gripDown[hand]);
+  const gripping = busy ? [] : hands.filter((hand) => gripDown[hand]);
 
   if (gripping.length >= 2) {
     twoHandMove(rigPos, rigRot);
@@ -237,14 +241,26 @@ function twoHandMove(rigPos: Vector3, rigRot: Quaternion): void {
       flyRot = yaw.multiply(flyRot);
     }
 
-    // --- Zoom (dolly): spread/close the hands to move along your view ---
+    // --- Zoom (dolly): move toward/away the object (the hand midpoint) so it
+    // stays centered. Spread = zoom OUT (move away), pinch = zoom IN (move closer),
+    // but never closer than minZoomDist. ---
     const distDelta = dist - lastTwoDist;
+    const head = Player.head.position.get();
 
-    if (Math.abs(distDelta) < maxStep) {
-      const forward = Player.forward.get();
+    if (head && Math.abs(distDelta) < maxStep) {
+      const midWorld = hl.add(hr).multiply(0.5);
+      const toObject = midWorld.subtract(head);
+      const objDist = toObject.magnitude();
 
-      if (forward) {
-        flyPos = flyPos.add(forward.multiply(distDelta * dollyGain)); // spread = forward (zoom in)
+      if (objDist > 0.001) {
+        const dollyDir = toObject.divide(objDist); // unit vector toward the object
+        let along = -distDelta * dollyGain;          // spread -> away (-), pinch -> toward (+)
+
+        if (along > 0) {
+          along = Math.min(along, Math.max(0, objDist - minZoomDist)); // respect the closeness limit
+        }
+
+        flyPos = flyPos.add(dollyDir.multiply(along));
       }
     }
   }

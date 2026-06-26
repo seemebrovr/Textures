@@ -71,6 +71,7 @@ let drag: Drag | undefined;
 
 export const scaleGizmo = {
   attach,
+  isDragging: () => drag !== undefined,
 };
 
 
