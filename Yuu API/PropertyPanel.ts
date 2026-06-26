@@ -40,6 +40,7 @@ export const propertyPanel = {
   isOpen,
   getPhysicsEnabled,
   setPhysicsEnabled,
+  setFrozenPose,
 };
 
 
@@ -58,9 +59,18 @@ function getPhysicsEnabled(entity: Entity): boolean {
 function setPhysicsEnabled(entity: Entity, enabled: boolean): void {
   physicsEnabled.set(entity, enabled);
 
-  if (enabled) {
-    frozen.delete(entity); // let gravity take over again
-  }
+  // Drop any stored frozen pose so the freeze loop re-captures the object's
+  // current pose next time (it may have just been moved or resized).
+  frozen.delete(entity);
+}
+
+/**
+ * Override the pinned pose used while an entity has physics OFF. Lets another
+ * system (e.g. the scale gizmo) move/resize the object without the freeze loop
+ * fighting it back to an old pose.
+ */
+function setFrozenPose(entity: Entity, pos: Vector3, rot: Quaternion): void {
+  frozen.set(entity, { pos: pos.clone(), rot: rot.clone() });
 }
 
 

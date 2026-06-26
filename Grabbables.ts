@@ -67,15 +67,15 @@ function start() {
   // grabPointRadius of a corner, edge, or face of the cube. Reaching into the
   // dead center no longer grabs it.
   grabbable.make(cube, grabPointRadius, {
-    grabPoints: cubeGrabPoints(cubeSize / 2),
+    grabPoints: boxGrabPoints(new Vector3(cubeSize, cubeSize, cubeSize)),
     onGrab: (hand) => console.log(hand + ' hand grabbed the cube'),
     onRelease: (hand) => console.log(hand + ' hand released the cube'),
   });
 
-  // XYZ resize handles. They appear while the cube is held ("selected"); grab a
-  // handle with your free hand and pull to scale the whole cube uniformly.
+  // XYZ resize handles. Point at the cube and pull the trigger to select it, then
+  // grab a handle (grip) and pull to resize just that one side.
   scaleGizmo.attach(cube, {
-    onScale: (size) => grabbable.setGrabPoints(cube, cubeGrabPoints(size / 2)),
+    onScale: (scale) => grabbable.setGrabPoints(cube, boxGrabPoints(scale)),
   });
 
   // While holding the cube, click the holding hand's thumbstick to open/close the
@@ -144,18 +144,19 @@ function makeTable() {
 }
 
 
-// Local-space grab anchors for a cube of the given half-extent: its 8 corners,
-// 12 edge midpoints, and 6 face centers - but NOT the dead center. Returned as
-// offsets (meters) from the cube's center; they rotate/move with the cube.
-function cubeGrabPoints(halfExtent: number): Vector3[] {
-  const coords = [-halfExtent, 0, halfExtent];
+// 26 surface anchors (corners, edges, face centers) for a box of the given scale,
+// skipping the dead center so grabbing requires reaching the surface.
+function boxGrabPoints(scale: Vector3): Vector3[] {
+  const xs = [-scale.x / 2, 0, scale.x / 2];
+  const ys = [-scale.y / 2, 0, scale.y / 2];
+  const zs = [-scale.z / 2, 0, scale.z / 2];
   const points: Vector3[] = [];
 
-  coords.forEach((x) => {
-    coords.forEach((y) => {
-      coords.forEach((z) => {
+  xs.forEach((x) => {
+    ys.forEach((y) => {
+      zs.forEach((z) => {
         if (x === 0 && y === 0 && z === 0) {
-          return; // skip the center - we don't want to grab from inside the cube
+          return;
         }
 
         points.push(new Vector3(x, y, z));

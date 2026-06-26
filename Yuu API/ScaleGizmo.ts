@@ -6,52 +6,68 @@ import { Entity } from "./Entity";
 import { Events } from "./Events";
 import { grabbable, Hand } from "./Grabbable";
 import { Player } from "./Player";
+import { propertyPanel } from "./PropertyPanel";
 import { registerStart } from "./RegisterStart";
 import { spawnPrimitive } from "./SpawnPrimitive";
 
 
 // ============================================================================
-// ScaleGizmo - uniform resize handles for an entity.
+// ScaleGizmo - per-axis, one-sided resize handles for an entity.
 // ----------------------------------------------------------------------------
-// While the target entity is "selected" (being held), three colored handles
-// (X = red, Y = green, Z = blue) appear sticking out of it. Grab a handle with
-// your FREE hand (grip) and move that hand away from / toward the holding hand
-// to grow / shrink the whole object uniformly.
+// SELECT the entity (point your pointer ray at it and pull the trigger) and six
+// colored handles appear, one on each face:
+//     +X / -X = red,   +Y / -Y = green,   +Z / -Z = blue
+// (the brighter handle of each pair points in the positive direction).
 //
-// Uniform scaling: every axis changes together, so a cube stays a cube. Which
-// handle you grab doesn't matter - they all scale uniformly (the handles are the
-// XYZ gizmo so you can see the object's orientation).
+// Grab a handle (grip) and pull: ONLY that face moves - the opposite face stays
+// anchored in place, so you resize one side at a time and the object can become
+// any box shape. Pull the trigger on the object again to deselect.
+//
+// Scaling happens while the object is selected and NOT held (it pins the object
+// for the duration of the drag).
 // ============================================================================
 
 
+type Handle = {
+  entity: Entity,
+  localDir: Vector3,  // unit direction in the object's local space
+  axisIndex: number,  // 0 = X, 1 = Y, 2 = Z
+}
+
 type GizmoOptions = {
-  /** Called with the new uniform size whenever the object is scaled. */
-  onScale?: (size: number) => void,
+  /** Called with the new scale whenever the object is resized. */
+  onScale?: (scale: Vector3) => void,
 }
 
 type GizmoState = {
   target: Entity,
-  handles: Entity[],
+  handles: Handle[],
   options: GizmoOptions,
+  selected: boolean,
 }
 
 
 const gizmos: GizmoState[] = [];
 
 const handleSize = 0.05;        // size of each handle cube (meters)
-const handleGap = 0.12;         // how far beyond the object's surface a handle floats
+const handleGap = 0.12;         // how far beyond a face a handle floats
 const handleGrabRadius = 0.08;  // how close a hand must be to grab a handle
-const scaleSensitivity = 1.0;   // size change per meter of hand-spread change
 const minSize = 0.05;
-const maxSize = 1.2;
+const maxSize = 1.5;
 
 
-// The single active drag, if any.
-let dragGizmo: GizmoState | undefined;
-let dragHand: Hand | undefined;     // the free hand pulling the handle
-let dragRefHand: Hand | undefined;  // the hand holding the object
-let dragStartSpread = 0;            // distance between the two hands when the drag began
-let dragStartSize = 0;              // object size when the drag began
+type Drag = {
+  gizmo: GizmoState,
+  hand: Hand,
+  axisIndex: number,
+  axisDir: Vector3,    // world direction of the grabbed face (fixed during the drag)
+  anchor: Vector3,     // world center of the opposite (fixed) face
+  grabOffset: number,  // distance from the grabbed face to the hand, along axisDir
+  startScale: Vector3, // object scale at grab time
+  rot: Quaternion,     // object rotation, held fixed during the drag
+}
+
+let drag: Drag | undefined;
 
 
 export const scaleGizmo = {
@@ -60,19 +76,35 @@ export const scaleGizmo = {
 
 
 /**
- * Add uniform scale handles to an entity. The handles appear whenever the entity
- * is held, and let you resize it by grabbing a handle with your free hand.
- * @param target the entity to resize (its scale is assumed uniform)
+ * Add per-axis resize handles to an entity. The handles appear when the entity is
+ * selected (pointer ray + trigger), and let you drag one face at a time.
+ * @param target the entity to resize
  * @param options optional onScale callback (e.g. to keep grab points in sync)
  */
 function attach(target: Entity, options: GizmoOptions = {}): void {
-  const handles = [
-    makeHandle(Color.red),                // X
-    makeHandle(Color.green),              // Y
-    makeHandle(new Color(0.2, 0.45, 1)),  // Z
+  const handles: Handle[] = [
+    { entity: makeHandle(new Color(0.9, 0.15, 0.15)), localDir: new Vector3(1, 0, 0), axisIndex: 0 },
+    { entity: makeHandle(new Color(0.45, 0.08, 0.08)), localDir: new Vector3(-1, 0, 0), axisIndex: 0 },
+    { entity: makeHandle(new Color(0.2, 0.8, 0.2)), localDir: new Vector3(0, 1, 0), axisIndex: 1 },
+    { entity: makeHandle(new Color(0.08, 0.4, 0.08)), localDir: new Vector3(0, -1, 0), axisIndex: 1 },
+    { entity: makeHandle(new Color(0.25, 0.5, 1)), localDir: new Vector3(0, 0, 1), axisIndex: 2 },
+    { entity: makeHandle(new Color(0.1, 0.2, 0.55)), localDir: new Vector3(0, 0, -1), axisIndex: 2 },
   ];
 
-  gizmos.push({ target: target, handles: handles, options: options });
+  const gizmo: GizmoState = {
+    target: target,
+    handles: handles,
+    options: options,
+    selected: false,
+  };
+
+  gizmos.push(gizmo);
+
+  // Selecting: point at the object and pull the trigger to toggle the handles.
+  target.rayClick.initialize(false);
+  target.rayClick.setClickFunction(() => {
+    gizmo.selected = !gizmo.selected;
+  });
 }
 
 
@@ -83,7 +115,7 @@ function makeHandle(color: Color): Entity {
     Quaternion.one,
     color,
     1,
-    false,   // no collider - we detect the hand by proximity
+    false,   // no collider - detected by proximity
     'Empty', // no physics
     undefined
   );
@@ -94,31 +126,35 @@ function makeHandle(color: Color): Entity {
 }
 
 
-// +X, +Y, +Z directions rotated into the target's current orientation.
-function localAxes(target: Entity): Vector3[] {
-  const rot = target.rot;
-
-  return [
-    rot.rotateVector(Vector3.right), // +X
-    rot.rotateVector(Vector3.up),    // +Y
-    rot.rotateVector(Vector3.back),  // +Z  (Vector3.back is (0, 0, 1))
-  ];
+function axisComponent(v: Vector3, i: number): number {
+  return i === 0 ? v.x : (i === 1 ? v.y : v.z);
 }
 
+function withAxis(v: Vector3, i: number, value: number): Vector3 {
+  return new Vector3(
+    i === 0 ? value : v.x,
+    i === 1 ? value : v.y,
+    i === 2 ? value : v.z,
+  );
+}
+
+
 function setHandlesVisible(gizmo: GizmoState, visible: boolean): void {
-  gizmo.handles.forEach((handle) => handle.visible.set(visible));
+  gizmo.handles.forEach((handle) => handle.entity.visible.set(visible));
 }
 
 function updateHandles(gizmo: GizmoState): void {
   const center = gizmo.target.pos;
   const rot = gizmo.target.rot;
-  const axes = localAxes(gizmo.target);
-  const dist = (gizmo.target.scale.x / 2) + handleGap;
+  const scale = gizmo.target.scale;
 
-  for (let i = 0; i < gizmo.handles.length; i++) {
-    gizmo.handles[i].pos = center.add(axes[i].multiply(dist));
-    gizmo.handles[i].rot = rot;
-  }
+  gizmo.handles.forEach((handle) => {
+    const worldDir = rot.rotateVector(handle.localDir);
+    const halfAxis = axisComponent(scale, handle.axisIndex) / 2;
+
+    handle.entity.pos = center.add(worldDir.multiply(halfAxis + handleGap));
+    handle.entity.rot = rot;
+  });
 }
 
 
@@ -126,14 +162,16 @@ function handPos(hand: Hand): Vector3 | undefined {
   return hand === 'Left' ? Player.leftHand.position.get() : Player.rightHand.position.get();
 }
 
-function nearestHandleDistance(gizmo: GizmoState, pos: Vector3): number {
-  let nearest = Infinity;
+function nearestHandle(gizmo: GizmoState, pos: Vector3): Handle | undefined {
+  let nearest: Handle | undefined;
+  let nearestDist = handleGrabRadius;
 
   gizmo.handles.forEach((handle) => {
-    const dist = handle.pos.distanceTo(pos);
+    const dist = handle.entity.pos.distanceTo(pos);
 
-    if (dist < nearest) {
-      nearest = dist;
+    if (dist <= nearestDist) {
+      nearest = handle;
+      nearestDist = dist;
     }
   });
 
@@ -142,8 +180,8 @@ function nearestHandleDistance(gizmo: GizmoState, pos: Vector3): number {
 
 
 function tryStartDrag(hand: Hand): void {
-  if (dragGizmo) {
-    return; // already dragging
+  if (drag) {
+    return;
   }
 
   const pos = handPos(hand);
@@ -153,38 +191,46 @@ function tryStartDrag(hand: Hand): void {
   }
 
   for (const gizmo of gizmos) {
-    const holders = grabbable.heldBy(gizmo.target);
-
-    // Must be selected (held) by the OTHER hand, leaving this hand free to scale.
-    if (holders.length === 0 || holders.includes(hand)) {
+    // Only a selected object that isn't currently held can be resized.
+    if (!gizmo.selected || !gizmo.target.exists() || grabbable.isHeld(gizmo.target)) {
       continue;
     }
 
-    if (nearestHandleDistance(gizmo, pos) > handleGrabRadius) {
+    const handle = nearestHandle(gizmo, pos);
+
+    if (!handle) {
       continue;
     }
 
-    const refHand = holders[0];
-    const refPos = handPos(refHand);
+    const rot = gizmo.target.rot;
+    const center = gizmo.target.pos;
+    const scale = gizmo.target.scale;
 
-    if (!refPos) {
-      continue;
-    }
+    const axisDir = rot.rotateVector(handle.localDir);
+    const sizeAxis = axisComponent(scale, handle.axisIndex);
 
-    dragGizmo = gizmo;
-    dragHand = hand;
-    dragRefHand = refHand;
-    dragStartSpread = refPos.distanceTo(pos);
-    dragStartSize = gizmo.target.scale.x;
+    // The opposite face is the fixed anchor; the grabbed face tracks the hand.
+    const anchor = center.subtract(axisDir.multiply(sizeAxis / 2));
+    const grabOffset = pos.subtract(anchor).dot(axisDir) - sizeAxis;
+
+    drag = {
+      gizmo: gizmo,
+      hand: hand,
+      axisIndex: handle.axisIndex,
+      axisDir: axisDir,
+      anchor: anchor,
+      grabOffset: grabOffset,
+      startScale: scale,
+      rot: rot,
+    };
+
     return;
   }
 }
 
 function stopDrag(hand: Hand): void {
-  if (dragHand === hand) {
-    dragGizmo = undefined;
-    dragHand = undefined;
-    dragRefHand = undefined;
+  if (drag && drag.hand === hand) {
+    drag = undefined;
   }
 }
 
@@ -200,39 +246,49 @@ function start() {
 }
 
 function onPhysicsUpdate(deltaTime: number) {
-  // Show + position handles for any selected (held) target; hide the rest.
+  // Show + position handles for selected objects; hide the rest.
   gizmos.forEach((gizmo) => {
-    const selected = gizmo.target.exists() && grabbable.isHeld(gizmo.target);
+    const show = gizmo.selected && gizmo.target.exists();
 
-    setHandlesVisible(gizmo, selected);
+    setHandlesVisible(gizmo, show);
 
-    if (selected) {
+    if (show) {
       updateHandles(gizmo);
     }
   });
 
-  // Apply the active scale drag, if any.
-  if (dragGizmo && dragHand && dragRefHand) {
-    if (!grabbable.isHeld(dragGizmo.target)) {
-      stopDrag(dragHand); // object was released -> stop scaling
+  // Apply an active one-sided scale drag.
+  if (drag) {
+    const target = drag.gizmo.target;
+
+    if (!target.exists() || !drag.gizmo.selected) {
+      drag = undefined;
       return;
     }
 
-    const pos = handPos(dragHand);
-    const refPos = handPos(dragRefHand);
+    const pos = handPos(drag.hand);
 
-    if (!pos || !refPos) {
+    if (!pos) {
       return;
     }
 
-    const spread = refPos.distanceTo(pos);
-    const delta = spread - dragStartSpread;
+    // How far the hand is from the fixed anchor face, along the drag axis.
+    const projection = pos.subtract(drag.anchor).dot(drag.axisDir);
 
-    let newSize = dragStartSize + (delta * scaleSensitivity);
-    newSize = Math.max(minSize, Math.min(maxSize, newSize));
+    let newSizeAxis = projection - drag.grabOffset;
+    newSizeAxis = Math.max(minSize, Math.min(maxSize, newSizeAxis));
 
-    dragGizmo.target.scale = new Vector3(newSize, newSize, newSize);
+    const newScale = withAxis(drag.startScale, drag.axisIndex, newSizeAxis);
+    const newCenter = drag.anchor.add(drag.axisDir.multiply(newSizeAxis / 2));
 
-    dragGizmo.options.onScale?.(newSize);
+    target.scale = newScale;
+    target.pos = newCenter;
+    target.rot = drag.rot;          // keep orientation fixed while resizing
+    target.velocity.set(Vector3.zero);
+
+    // Keep the physics-off freeze in sync so it doesn't snap the object back.
+    propertyPanel.setFrozenPose(target, newCenter, drag.rot);
+
+    drag.gizmo.options.onScale?.(newScale);
   }
 }
