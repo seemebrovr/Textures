@@ -5,9 +5,11 @@ import { inWorldConsole } from "./Yuu API/Console";
 import { Controller } from "./Yuu API/Controller";
 import { Entity } from "./Yuu API/Entity";
 import { grabbable, Hand } from "./Yuu API/Grabbable";
+import { Player } from "./Yuu API/Player";
 import { propertyPanel } from "./Yuu API/PropertyPanel";
 import { registerStart } from "./Yuu API/RegisterStart";
 import { scaleGizmo } from "./Yuu API/ScaleGizmo";
+import { spawnMenu } from "./Yuu API/SpawnMenu";
 import { spawnPrimitive } from "./Yuu API/SpawnPrimitive";
 
 
@@ -41,6 +43,7 @@ const tableSurfaceY = tableCenter.y + legHeight + topThickness;
 // The starting cube.
 const cubeSize = 0.2;     // 20cm cube
 const grabReach = 0.07;   // how close (m) a hand must be to a cube's surface to grab it
+const cubeBlue = new Color(0.2, 0.45, 1);
 
 
 registerStart(start);
@@ -76,6 +79,14 @@ function start() {
 
   Controller.subscribe('leftThumbstick', 'Pressed', () => togglePanel('Left'));
   Controller.subscribe('rightThumbstick', 'Pressed', () => togglePanel('Right'));
+
+  // Spawn menu: press the left X button to open a palette in front of you, then
+  // click a color to spawn that cube straight into the hand you clicked with.
+  spawnMenu.configure([
+    { label: 'Red', color: Color.red, onSpawn: (hand) => spawnIntoHand(hand, Color.red) },
+    { label: 'Green', color: Color.green, onSpawn: (hand) => spawnIntoHand(hand, Color.green) },
+    { label: 'Blue', color: cubeBlue, onSpawn: (hand) => spawnIntoHand(hand, cubeBlue) },
+  ]);
 
   console.log('Grabbables ready: grab a cube by its surface and squeeze grip.');
 }
@@ -120,6 +131,18 @@ function duplicateCube(target: Entity): void {
   const pos = target.pos.add(new Vector3(scale.x + 0.1, 0, 0));
 
   spawnGrabbableCube(pos, scale, rot, color);
+}
+
+
+// Spawn a cube and place it straight into the given hand (used by the spawn menu).
+function spawnIntoHand(hand: Hand, color: Color): void {
+  const handPos = (hand === 'Left'
+    ? Player.leftHand.position.get()
+    : Player.rightHand.position.get()) ?? new Vector3(0, 1.4, -0.4);
+
+  const cube = spawnGrabbableCube(handPos, new Vector3(cubeSize, cubeSize, cubeSize), Quaternion.one, color);
+
+  grabbable.forceGrab(cube, hand);
 }
 
 

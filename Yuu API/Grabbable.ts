@@ -76,6 +76,7 @@ export const grabbable = {
   getSnapEnabled,
   setCollidable,
   getCollidable,
+  forceGrab,
 }
 
 
@@ -176,6 +177,43 @@ function getCollidable(entity: Entity): boolean {
 function releaseAll(): void {
   release('Left');
   release('Right');
+}
+
+/**
+ * Attach an entity directly to a hand (e.g. spawning an object into the hand).
+ * Does nothing if that hand is already holding something.
+ */
+function forceGrab(entity: Entity, hand: Hand): void {
+  const state = grabbables.get(entity);
+
+  if (!state || handHeld.get(hand) || state.heldBy.includes(hand)) {
+    return;
+  }
+
+  // Place it at the hand so it sits in the hand once held.
+  const handP = getHandPos(hand);
+
+  if (handP) {
+    entity.pos = handP;
+  }
+
+  const wasUnheld = state.heldBy.length === 0;
+
+  state.heldBy.push(hand);
+  handHeld.set(hand, state);
+
+  if (wasUnheld) {
+    if (state.shielded) {
+      state.shielded = false;
+      state.shieldPose = undefined;
+    }
+
+    entity.collidable.set(false);
+  }
+
+  captureOffset(state);
+
+  state.options.onGrab?.(hand);
 }
 
 
