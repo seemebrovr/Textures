@@ -195,16 +195,22 @@ function twoHandMove(rigPos: Vector3, rigRot: Quaternion): void {
       flyRot = yaw.multiply(flyRot);
     }
 
+    // Dolly HORIZONTALLY along your view, so zooming never changes your height
+    // (aiming head->hands tilted downward and sank you, dropping the ray).
     const distDelta = dist - lastTwoDist;
     const head2 = Player.head.position.get();
-    if (head2 && Math.abs(distDelta) < maxStep) {
-      const midWorld = hl.add(hr).multiply(0.5);
-      const toObject = midWorld.subtract(head2);
-      const objDist = toObject.magnitude();
-      if (objDist > 0.001) {
-        const dollyDir = toObject.divide(objDist);
-        let along = -distDelta * dollyGain;
-        if (along > 0) { along = Math.min(along, Math.max(0, objDist - minZoomDist)); }
+    const forward = Player.forward.get();
+    if (head2 && forward && Math.abs(distDelta) < maxStep) {
+      const fh = new Vector3(forward.x, 0, forward.z);
+      const fl = fh.magnitude();
+      if (fl > 0.001) {
+        const dollyDir = fh.divide(fl);
+        let along = -distDelta * dollyGain; // spread = back (zoom out), pinch = forward (zoom in)
+        if (along > 0) {
+          const mid = hl.add(hr).multiply(0.5);
+          const horizToObject = new Vector3(mid.x - head2.x, 0, mid.z - head2.z).magnitude();
+          along = Math.min(along, Math.max(0, horizToObject - minZoomDist));
+        }
         flyPos = flyPos.add(dollyDir.multiply(along));
       }
     }
