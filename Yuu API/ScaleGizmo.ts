@@ -52,8 +52,7 @@ const gizmos: GizmoState[] = [];
 const handleSize = 0.05;        // size of each handle cube (meters)
 const handleGap = 0.12;         // how far beyond a face a handle floats
 const handleGrabRadius = 0.08;  // how close a hand must be to grab a handle
-const minSize = 0.05;
-const maxSize = 1.5;
+const minSize = 0.05; // small floor so a face can't collapse through the other side (no upper limit)
 
 
 type Drag = {
@@ -276,7 +275,7 @@ function onPhysicsUpdate(deltaTime: number) {
     const projection = pos.subtract(drag.anchor).dot(drag.axisDir);
 
     let newSizeAxis = projection - drag.grabOffset;
-    newSizeAxis = Math.max(minSize, Math.min(maxSize, newSizeAxis));
+    newSizeAxis = Math.max(minSize, newSizeAxis); // floor only - stretch a face as far as you want
 
     const newScale = withAxis(drag.startScale, drag.axisIndex, newSizeAxis);
     const newCenter = drag.anchor.add(drag.axisDir.multiply(newSizeAxis / 2));
