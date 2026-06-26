@@ -11,9 +11,10 @@ import { spawnPrimitive } from "./SpawnPrimitive";
 // ============================================================================
 // PropertyPanel - a small in-world property panel for an entity.
 // ----------------------------------------------------------------------------
-// Properties:
+// Rows:
 //   "Physics"  - On: falls / can be thrown.  Off: frozen in place.
-//   "Snap"     - On: releasing snaps the object to a grid (great for building).
+//   "Snap"     - On: held to a grid, straight (great for building).
+//   "Collide"  - On: solid.  Off: passes through everything (ghost).
 //   "Duplicate"- spawns a copy (handler supplied by the caller).
 //   "X"        - close the panel.
 // Operate it with the ray pointer: aim a hand at a button and pull the trigger.
@@ -50,6 +51,7 @@ export const propertyPanel = {
 let panelRoot: Entity | undefined;
 let physicsButton: ButtonHandle | undefined;
 let snapButton: ButtonHandle | undefined;
+let collideButton: ButtonHandle | undefined;
 
 
 function isOpen(): boolean {
@@ -73,12 +75,12 @@ function setFrozenPose(entity: Entity, pos: Vector3, rot: Quaternion): void {
 function open(target: Entity, options: OpenOptions = {}): void {
   close();
 
-  const anchor = target.pos.add(new Vector3(0, 0.35, 0.12));
+  const anchor = target.pos.add(new Vector3(0, 0.4, 0.12));
 
   panelRoot = spawnPrimitive.plane(
     'Front',
     anchor,
-    new Vector3(0.34, 0.36, 1),
+    new Vector3(0.34, 0.44, 1),
     Quaternion.one,
     new Color(0.12, 0.12, 0.14),
     1,
@@ -87,12 +89,12 @@ function open(target: Entity, options: OpenOptions = {}): void {
     undefined
   );
 
-  addLabel(panelRoot, new Vector3(0, 0.14, 0.002), 'Properties', 5, Color.white);
+  addLabel(panelRoot, new Vector3(0, 0.18, 0.002), 'Properties', 5, Color.white);
 
   // X close button (top-right corner).
   const closeButton = makeButton(
     panelRoot,
-    new Vector3(0.145, 0.145, 0.002),
+    new Vector3(0.145, 0.185, 0.002),
     new Vector3(0.04, 0.04, 1),
     'X',
     5,
@@ -102,38 +104,43 @@ function open(target: Entity, options: OpenOptions = {}): void {
   closeButton.root.rayClick.setClickFunction(() => close());
 
   // Physics on/off row.
-  addLabel(panelRoot, new Vector3(-0.085, 0.06, 0.002), 'Physics', 4, Color.white);
+  addLabel(panelRoot, new Vector3(-0.085, 0.10, 0.002), 'Physics', 4, Color.white);
 
-  physicsButton = makeButton(
-    panelRoot,
-    new Vector3(0.07, 0.06, 0.002),
-    new Vector3(0.12, 0.06, 1),
+  physicsButton = makeToggle(
+    new Vector3(0.07, 0.10, 0.002),
     physicsCaption(target),
-    4,
     physicsColor(target),
-    Color.white
+    () => {
+      setPhysicsEnabled(target, !getPhysicsEnabled(target));
+      refreshToggle(physicsButton, physicsCaption(target), physicsColor(target));
+    }
   );
-  physicsButton.root.rayClick.setClickFunction(() => {
-    setPhysicsEnabled(target, !getPhysicsEnabled(target));
-    refreshPhysicsButton(target);
-  });
 
   // Snap on/off row.
-  addLabel(panelRoot, new Vector3(-0.085, -0.01, 0.002), 'Snap', 4, Color.white);
+  addLabel(panelRoot, new Vector3(-0.085, 0.03, 0.002), 'Snap', 4, Color.white);
 
-  snapButton = makeButton(
-    panelRoot,
-    new Vector3(0.07, -0.01, 0.002),
-    new Vector3(0.12, 0.06, 1),
+  snapButton = makeToggle(
+    new Vector3(0.07, 0.03, 0.002),
     snapCaption(target),
-    4,
     snapColor(target),
-    Color.white
+    () => {
+      grabbable.setSnapEnabled(target, !grabbable.getSnapEnabled(target));
+      refreshToggle(snapButton, snapCaption(target), snapColor(target));
+    }
   );
-  snapButton.root.rayClick.setClickFunction(() => {
-    grabbable.setSnapEnabled(target, !grabbable.getSnapEnabled(target));
-    refreshSnapButton(target);
-  });
+
+  // Collide on/off row.
+  addLabel(panelRoot, new Vector3(-0.085, -0.04, 0.002), 'Collide', 4, Color.white);
+
+  collideButton = makeToggle(
+    new Vector3(0.07, -0.04, 0.002),
+    collideCaption(target),
+    collideColor(target),
+    () => {
+      grabbable.setCollidable(target, !grabbable.getCollidable(target));
+      refreshToggle(collideButton, collideCaption(target), collideColor(target));
+    }
+  );
 
   // Duplicate button (only shown if the caller provided a duplicate handler).
   if (options.onDuplicate) {
@@ -141,7 +148,7 @@ function open(target: Entity, options: OpenOptions = {}): void {
 
     const dupButton = makeButton(
       panelRoot,
-      new Vector3(0, -0.11, 0.002),
+      new Vector3(0, -0.15, 0.002),
       new Vector3(0.24, 0.06, 1),
       'Duplicate',
       4,
@@ -160,36 +167,38 @@ function close(): void {
   panelRoot = undefined;
   physicsButton = undefined;
   snapButton = undefined;
+  collideButton = undefined;
 }
 
 
-function physicsCaption(target: Entity): string {
-  return getPhysicsEnabled(target) ? 'On' : 'Off';
+// --- toggle helpers ---------------------------------------------------------
+
+const onColor = new Color(0.18, 0.5, 0.2);
+const offColor = new Color(0.4, 0.4, 0.45);
+
+function caption(on: boolean): string {
+  return on ? 'On' : 'Off';
 }
 
-function physicsColor(target: Entity): Color {
-  return getPhysicsEnabled(target) ? new Color(0.18, 0.5, 0.2) : new Color(0.4, 0.4, 0.45);
+function physicsCaption(target: Entity): string { return caption(getPhysicsEnabled(target)); }
+function physicsColor(target: Entity): Color { return getPhysicsEnabled(target) ? onColor : offColor; }
+
+function snapCaption(target: Entity): string { return caption(grabbable.getSnapEnabled(target)); }
+function snapColor(target: Entity): Color { return grabbable.getSnapEnabled(target) ? onColor : offColor; }
+
+function collideCaption(target: Entity): string { return caption(grabbable.getCollidable(target)); }
+function collideColor(target: Entity): Color { return grabbable.getCollidable(target) ? onColor : offColor; }
+
+function makeToggle(pos: Vector3, text: string, bgColor: Color, onClick: () => void): ButtonHandle {
+  const button = makeButton(panelRoot!, pos, new Vector3(0.12, 0.06, 1), text, 4, bgColor, Color.white);
+  button.root.rayClick.setClickFunction(onClick);
+  return button;
 }
 
-function refreshPhysicsButton(target: Entity): void {
-  if (physicsButton) {
-    physicsButton.label.text.display.set(physicsCaption(target));
-    physicsButton.root.mesh.color.set(physicsColor(target), 1);
-  }
-}
-
-function snapCaption(target: Entity): string {
-  return grabbable.getSnapEnabled(target) ? 'On' : 'Off';
-}
-
-function snapColor(target: Entity): Color {
-  return grabbable.getSnapEnabled(target) ? new Color(0.18, 0.5, 0.2) : new Color(0.4, 0.4, 0.45);
-}
-
-function refreshSnapButton(target: Entity): void {
-  if (snapButton) {
-    snapButton.label.text.display.set(snapCaption(target));
-    snapButton.root.mesh.color.set(snapColor(target), 1);
+function refreshToggle(button: ButtonHandle | undefined, text: string, color: Color): void {
+  if (button) {
+    button.label.text.display.set(text);
+    button.root.mesh.color.set(color, 1);
   }
 }
 

@@ -8,15 +8,15 @@ import { registerStart } from "./RegisterStart";
 
 
 // Proximity grab with preserved offset and throw-on-release. Supports one- or
-// two-handed holding, surface grabbing, optional grid snapping, and avoids
-// launching the player:
+// two-handed holding, surface grabbing, grid snapping, a per-object collidable
+// preference, and avoids launching the player:
 //   - While held, an object is "ghosted" (collision off) so it can't shove the
-//     player or jitter against the world, and follows the hand smoothly.
-//   - A non-held object near the player's body is also ghosted + pinned, so you
-//     pass through it instead of being thrown (the engine exposes no collision
-//     layers or player-velocity control, so this is the available approach).
-//   - With snapping enabled, releasing snaps position to a grid and rotation to
-//     axis-aligned (and does not throw).
+//     player or jitter on the world, and follows the hand smoothly.
+//   - A non-held object near the player's body is ghosted + pinned, so you pass
+//     through it instead of being thrown.
+//   - With snapping on, a non-held object is held to a grid position with an
+//     axis-aligned rotation (so it stays put and perfectly straight).
+//   - The Collide preference (get/setCollidable) is restored after ghosting.
 
 
 export type Hand = 'Left' | 'Right';
@@ -42,11 +42,12 @@ type GrabbableState = {
   grabBox: Vector3 | undefined,
   snapGrid: number,
   snapEnabled: boolean,
+  collidablePref: boolean,      // the user's chosen collidable state (restored after ghosting)
   heldBy: Hand[],
   localPosOffset: Vector3,
   localRotOffset: Quaternion,
   shielded: boolean,            // currently phased out because the player body is close
-  shieldPose: Pose | undefined, // pose to hold while shielded
+  shieldPose: Pose | undefined,
 }
 
 
@@ -73,6 +74,8 @@ export const grabbable = {
   setGrabBox,
   setSnapEnabled,
   getSnapEnabled,
+  setCollidable,
+  getCollidable,
 }
 
 
@@ -89,6 +92,7 @@ function make(entity: Entity, grabRadius: number = 0.2, options: GrabbableOption
     grabBox: options.grabBox,
     snapGrid: options.snapGrid ?? 0,
     snapEnabled: false,
+    collidablePref: true,
     heldBy: [],
     localPosOffset: Vector3.zero,
     localRotOffset: Quaternion.one,
@@ -149,6 +153,24 @@ function setSnapEnabled(entity: Entity, enabled: boolean): void {
 
 function getSnapEnabled(entity: Entity): boolean {
   return grabbables.get(entity)?.snapEnabled ?? false;
+}
+
+function setCollidable(entity: Entity, collidable: boolean): void {
+  const state = grabbables.get(entity);
+
+  if (state) {
+    state.collidablePref = collidable;
+
+    // Apply now unless the object is currently force-ghosted (held or shielded);
+    // in those cases the preference is applied when it un-ghosts.
+    if (state.heldBy.length === 0 && !state.shielded) {
+      entity.collidable.set(collidable);
+    }
+  }
+}
+
+function getCollidable(entity: Entity): boolean {
+  return grabbables.get(entity)?.collidablePref ?? true;
 }
 
 function releaseAll(): void {
@@ -328,28 +350,12 @@ function release(hand: Hand): void {
     captureOffset(state);
   }
   else {
-    // Fully released: become solid again.
-    state.entity.collidable.set(true);
-
-    if (state.snapEnabled && state.snapGrid > 0) {
-      snapToGrid(state);
-    }
+    // Fully released: restore the user's collidable preference. (Grid snapping,
+    // if on, is applied continuously in onPhysicsUpdate.)
+    state.entity.collidable.set(state.collidablePref);
   }
 
   state.options.onRelease?.(hand);
-}
-
-function snapToGrid(state: GrabbableState): void {
-  const g = state.snapGrid;
-  const p = state.entity.pos;
-
-  state.entity.pos = new Vector3(
-    Math.round(p.x / g) * g,
-    Math.round(p.y / g) * g,
-    Math.round(p.z / g) * g,
-  );
-  state.entity.rot = Quaternion.one;          // axis-align
-  state.entity.velocity.set(Vector3.zero);    // place neatly (no throw)
 }
 
 
@@ -397,18 +403,35 @@ function onPhysicsUpdate(deltaTime: number) {
     }
 
     // Not held: shield the player from being launched by this object.
-    if (bodyPos) {
-      applyPlayerShield(state, bodyPos);
+    const shielded = bodyPos ? applyPlayerShield(state, bodyPos) : false;
+
+    // Snapping on: hold a grid position and an axis-aligned rotation every frame
+    // so it stays put and perfectly straight (no physics tipping).
+    if (!shielded && state.snapEnabled && state.snapGrid > 0) {
+      const g = state.snapGrid;
+      const p = state.entity.pos;
+
+      state.entity.pos = new Vector3(
+        Math.round(p.x / g) * g,
+        Math.round(p.y / g) * g,
+        Math.round(p.z / g) * g,
+      );
+      state.entity.rot = Quaternion.one;
+      state.entity.velocity.set(Vector3.zero);
     }
   });
 }
 
-function applyPlayerShield(state: GrabbableState, bodyPos: Vector3): void {
+// Returns true if the object is currently shielded (phased out near the player).
+function applyPlayerShield(state: GrabbableState, bodyPos: Vector3): boolean {
+  // If the user already made it non-collidable, there's nothing to shield.
+  if (!state.collidablePref) {
+    return false;
+  }
+
   const surfaceDist = boxSurfaceDistance(state.entity.pos, state.entity.rot, halfExtentsOf(state), bodyPos);
 
   if (surfaceDist < playerBodyReach) {
-    // Player body is touching/inside the object: phase it out and hold it still
-    // so it neither launches the player nor falls while non-collidable.
     if (!state.shielded) {
       state.shielded = true;
       state.shieldPose = { pos: state.entity.pos.clone(), rot: state.entity.rot.clone() };
@@ -420,11 +443,15 @@ function applyPlayerShield(state: GrabbableState, bodyPos: Vector3): void {
       state.entity.rot = state.shieldPose.rot;
       state.entity.velocity.set(Vector3.zero);
     }
+
+    return true;
   }
-  else if (state.shielded) {
-    // Player moved away: make it solid again.
+
+  if (state.shielded) {
     state.shielded = false;
     state.shieldPose = undefined;
-    state.entity.collidable.set(true);
+    state.entity.collidable.set(state.collidablePref);
   }
+
+  return false;
 }
