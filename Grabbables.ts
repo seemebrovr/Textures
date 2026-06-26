@@ -6,6 +6,7 @@ import { Controller } from "./Yuu API/Controller";
 import { grabbable, Hand } from "./Yuu API/Grabbable";
 import { propertyPanel } from "./Yuu API/PropertyPanel";
 import { registerStart } from "./Yuu API/RegisterStart";
+import { scaleGizmo } from "./Yuu API/ScaleGizmo";
 import { spawnPrimitive } from "./Yuu API/SpawnPrimitive";
 
 
@@ -69,6 +70,12 @@ function start() {
     grabPoints: cubeGrabPoints(cubeSize / 2),
     onGrab: (hand) => console.log(hand + ' hand grabbed the cube'),
     onRelease: (hand) => console.log(hand + ' hand released the cube'),
+  });
+
+  // XYZ resize handles. They appear while the cube is held ("selected"); grab a
+  // handle with your free hand and pull to scale the whole cube uniformly.
+  scaleGizmo.attach(cube, {
+    onScale: (size) => grabbable.setGrabPoints(cube, cubeGrabPoints(size / 2)),
   });
 
   // While holding the cube, click the holding hand's thumbstick to open/close the

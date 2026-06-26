@@ -67,6 +67,7 @@ export const grabbable = {
   isHeld,
   releaseAll,
   heldBy,
+  setGrabPoints,
 }
 
 
@@ -122,6 +123,17 @@ function heldBy(entity: Entity): Hand[] {
   const state = grabbables.get(entity);
 
   return state ? [...state.heldBy] : [];
+}
+
+/**
+ * Replace the local-space grab points for an entity (e.g. after it has been resized).
+ */
+function setGrabPoints(entity: Entity, points: Vector3[]): void {
+  const state = grabbables.get(entity);
+
+  if (state) {
+    state.grabPoints = points;
+  }
 }
 
 /**
