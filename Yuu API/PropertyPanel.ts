@@ -14,7 +14,7 @@ import { spawnPrimitive } from "./SpawnPrimitive";
 // Currently shows one property:
 //   "Physics" - a toggle that switches the object between:
 //       On  -> a normal physics body (falls under gravity, can be thrown)
-//       Off -> frozen in place (stays wherever it is, no gravity)
+//       Off -> frozen in place (no falling, no spinning)
 // There is also an X button to close the panel.
 //
 // The panel is operated with the ray pointer: aim a hand at a button and pull
@@ -30,8 +30,8 @@ type ButtonHandle = {
 
 // Per-entity physics state. A missing entry means "enabled" (a normal Physics body).
 const physicsEnabled = new Map<Entity, boolean>();
-// Position a physics-off entity is pinned to while it isn't being held.
-const frozenPos = new Map<Entity, Vector3>();
+// Pose (position + rotation) a physics-off entity is pinned to while it isn't held.
+const frozen = new Map<Entity, { pos: Vector3, rot: Quaternion }>();
 
 
 export const propertyPanel = {
@@ -59,7 +59,7 @@ function setPhysicsEnabled(entity: Entity, enabled: boolean): void {
   physicsEnabled.set(entity, enabled);
 
   if (enabled) {
-    frozenPos.delete(entity); // let gravity take over again
+    frozen.delete(entity); // let gravity take over again
   }
 }
 
@@ -200,18 +200,21 @@ function onPhysicsUpdate(deltaTime: number) {
     }
 
     if (grabbable.isHeld(entity)) {
-      frozenPos.delete(entity);
+      frozen.delete(entity);
       return;
     }
 
-    let pin = frozenPos.get(entity);
+    let pin = frozen.get(entity);
 
     if (!pin) {
-      pin = entity.pos.clone();
-      frozenPos.set(entity, pin);
+      pin = { pos: entity.pos.clone(), rot: entity.rot.clone() };
+      frozen.set(entity, pin);
     }
 
-    entity.pos = pin;
+    // Pin position AND rotation and clear linear velocity, so the object is
+    // completely still while physics is off (no falling, no spinning).
+    entity.pos = pin.pos;
+    entity.rot = pin.rot;
     entity.velocity.set(Vector3.zero);
   });
 }
