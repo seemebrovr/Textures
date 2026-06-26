@@ -33,12 +33,19 @@ export type GrabbableOptions = {
   onGrab?: (hand: Hand) => void,
   /** Called when a hand releases this entity (fires for each hand) */
   onRelease?: (hand: Hand) => void,
+  /**
+   * Local-space points (offsets from the entity's center, in meters) the hand
+   * must be near to grab - e.g. a cube's corners, edges and face centers. They
+   * rotate and move with the entity. If omitted, the entity's center is used.
+   */
+  grabPoints?: Vector3[],
 }
 
 type GrabbableState = {
   entity: Entity,
   grabRadius: number,
   options: GrabbableOptions,
+  grabPoints: Vector3[],      // local-space grab anchors; empty means "use the center"
   heldBy: Hand[],             // hands currently holding this: 0, 1, or 2
   localPosOffset: Vector3,    // object position relative to the grab frame, in frame-local space
   localRotOffset: Quaternion, // object rotation relative to the grab frame
@@ -78,6 +85,7 @@ function make(entity: Entity, grabRadius: number = 0.2, options: GrabbableOption
     entity: entity,
     grabRadius: grabRadius,
     options: options,
+    grabPoints: options.grabPoints ?? [],
     heldBy: [],
     localPosOffset: Vector3.zero,
     localRotOffset: Quaternion.one,
@@ -177,6 +185,34 @@ function captureOffset(state: GrabbableState): void {
 }
 
 
+/**
+ * Shortest distance from a hand to this grabbable's grab points (world space).
+ * Grab points are stored in entity-local space, so they are rotated and offset
+ * by the entity's current transform. With no grab points, the distance to the
+ * entity's center is used (the original behavior).
+ */
+function handDistanceToGrabPoints(state: GrabbableState, handPos: Vector3): number {
+  if (state.grabPoints.length === 0) {
+    return state.entity.pos.distanceTo(handPos);
+  }
+
+  const pos = state.entity.pos;
+  const rot = state.entity.rot;
+
+  let nearest = Infinity;
+
+  state.grabPoints.forEach((localPoint) => {
+    const worldPoint = pos.add(rot.rotateVector(localPoint));
+    const dist = worldPoint.distanceTo(handPos);
+
+    if (dist < nearest) {
+      nearest = dist;
+    }
+  });
+
+  return nearest;
+}
+
 function tryGrab(hand: Hand): void {
   if (handHeld.get(hand)) {
     return; // this hand is already holding something
@@ -198,7 +234,7 @@ function tryGrab(hand: Hand): void {
       return;
     }
 
-    const dist = state.entity.pos.distanceTo(handPos);
+    const dist = handDistanceToGrabPoints(state, handPos);
 
     if (dist <= state.grabRadius && dist < nearestDist) {
       nearest = state;
