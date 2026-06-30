@@ -7,8 +7,14 @@ import { Events } from "./Events";
 import { grabbable, Hand } from "./Grabbable";
 import { Player } from "./Player";
 import { Raycast } from "./Raycast";
+import { applyRemoteTexture, fetchManifest, TextureManifestEntry } from "./RemoteTexture";
 import { registerStart } from "./RegisterStart";
 import { spawnPrimitive } from "./SpawnPrimitive";
+import { Texture } from "./Texture";
+
+
+// Conversion server host (a Cloudflare quick tunnel). UPDATE THIS when cloudflared restarts.
+const TEXTURE_HOST = 'october-explained-teaches-yale.trycloudflare.com';
 
 
 // ============================================================================
@@ -47,6 +53,8 @@ type Settings = {
   gravity: boolean,
   tintColor: Color,
   tintAlpha: number,
+  texture: string,      // current texture id ('' = none)
+  transparent: boolean, // render the texture's transparent areas (stickers)
 };
 
 type Btn = { root: Entity, label: Entity };
@@ -68,6 +76,8 @@ function defaultSettings(): Settings {
     gravity: true,
     tintColor: new Color(1, 1, 1),
     tintAlpha: 1,
+    texture: '',
+    transparent: false,
   };
 }
 
@@ -367,7 +377,7 @@ function buildAttributes(t: Entity): void {
   let sx = 0.01;
   swatches.forEach((col) => {
     const sw = rect(r3, new Vector3(sx, 0, 0.002), new Vector3(0.032, 0.032, 1), col, true);
-    sw.rayClick.setClickFunction(() => { const s = getSettings(t); s.tintColor = col; t.mesh.color.set(col, s.tintAlpha); });
+    sw.rayClick.setClickFunction(() => { getSettings(t).tintColor = col; applyMaterial(t); });
     sx += 0.038;
   });
 
@@ -376,9 +386,79 @@ function buildAttributes(t: Entity): void {
   const minus = button(r4, new Vector3(0.13, 0, 0.002), new Vector3(0.04, 0.05, 1), '-', 4, segBg, Color.white);
   const valLabel = label(r4, new Vector3(0.225, 0, 0.003), s.tintAlpha.toFixed(2), 3, Color.white);
   const plus = button(r4, new Vector3(0.30, 0, 0.002), new Vector3(0.04, 0.05, 1), '+', 4, segBg, Color.white);
-  const applyTint = () => { t.mesh.color.set(s.tintColor, s.tintAlpha); valLabel.text.display.set(s.tintAlpha.toFixed(2)); };
+  const applyTint = () => { applyMaterial(t); valLabel.text.display.set(s.tintAlpha.toFixed(2)); };
   minus.root.rayClick.setClickFunction(() => { s.tintAlpha = Math.max(0.1, Math.round((s.tintAlpha - 0.1) * 10) / 10); applyTint(); });
   plus.root.rayClick.setClickFunction(() => { s.tintAlpha = Math.min(1, Math.round((s.tintAlpha + 0.1) * 10) / 10); applyTint(); });
+
+  // Texture (tap to cycle: None -> server textures -> wrap).
+  const r5 = settingRow(c, rowY[5], 'Texture', 'Image on the surface.', false);
+  const names = textureNames();
+  dropdownButton(r5, () => textureLabel(t), () => { cycleTexture(t, names, 1); });
+
+  // Transparent: show the texture's transparent areas (stickers / decals).
+  const r6 = settingRow(c, rowY[6], 'Transparent', 'See-through (stickers).', false);
+  toggleSwitch(r6, () => getSettings(t).transparent, () => { getSettings(t).transparent = !getSettings(t).transparent; applyMaterial(t); }, true);
+}
+
+
+// --- texture controls -------------------------------------------------------
+
+let serverTextures: TextureManifestEntry[] | undefined;
+let clearTex: Texture | undefined;
+let texBusy = false;
+
+// Texture names for the dropdown: ['None', ...server ids]. Manifest fetched once, cached.
+function textureNames(): string[] {
+  if (serverTextures === undefined) { serverTextures = fetchManifest(TEXTURE_HOST); }
+  return ['None'].concat(serverTextures.map((e) => e.id));
+}
+
+function textureLabel(t: Entity): string {
+  const id = getSettings(t).texture;
+  return id === '' ? 'None' : id;
+}
+
+function cycleTexture(t: Entity, names: string[], dir: number): void {
+  if (texBusy || names.length === 0) { return; }
+
+  const id = getSettings(t).texture;
+  const cur = id === '' ? 0 : Math.max(0, names.indexOf(id));
+  const next = (cur + dir + names.length) % names.length;
+
+  if (next === 0) {
+    getSettings(t).texture = '';
+    applyNoTexture(t);
+  }
+  else {
+    getSettings(t).texture = names[next];
+    applyServerTexture(t, names[next]);
+  }
+}
+
+function applyServerTexture(t: Entity, id: string): void {
+  texBusy = true;
+  applyRemoteTexture(t, TEXTURE_HOST, '/tex/' + id + '.json', { useMipMaps: false })
+    .then(() => { texBusy = false; applyMaterial(t); })
+    .catch((e) => { texBusy = false; console.log('PropertyPanel texture: ' + e); });
+}
+
+// "None": apply a tiny white texture so the object shows its tint color again.
+function applyNoTexture(t: Entity): void {
+  if (!clearTex) {
+    clearTex = new Texture(2, 2);
+    clearTex.fillWithColor(Color.white, 1);
+    clearTex.updateTexture();
+  }
+  t.mesh.texture.set(clearTex, false);
+  applyMaterial(t);
+}
+
+// Set material tint + alpha. Transparent mode needs alpha < 1 so the texture's
+// transparent pixels show through (the engine only enables transparency below 1).
+function applyMaterial(t: Entity): void {
+  const s = getSettings(t);
+  const alpha = s.transparent ? Math.min(s.tintAlpha, 0.999) : s.tintAlpha;
+  t.mesh.color.set(s.tintColor, alpha);
 }
 
 // Three value chips on the right of a card (Position/Rotation/Scale).
