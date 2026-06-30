@@ -7,7 +7,7 @@ export class Texture {
   public imageID: number;
   public width: number;
   public height: number;
-
+//
   /**
    * Creates an image in memory, make sure to destroy when done!
    * @param width in pixels
