@@ -17,7 +17,7 @@ import { spawnPrimitive } from "./Yuu API/SpawnPrimitive";
  * RemoteTexture.ts). The last "[RT] L#" line before a crash is the exact failing step.
  */
 
-const TEXTURE_HOST = 'describing-conservation-refer-johns.trycloudflare.com'; // update if cloudflared restarted
+const TEXTURE_HOST = 'october-explained-teaches-yale.trycloudflare.com'; // update if cloudflared restarted
 const TEXTURE_PATH = '/tex/brick_01.json';
 
 let cube: Entity | undefined;
