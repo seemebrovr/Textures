@@ -10,14 +10,18 @@ import { spawnPrimitive } from "./Yuu API/SpawnPrimitive";
 
 
 /**
- * RemoteTexture DIAGNOSTIC v3
- * ===========================
- * setPixelsColor and the payload fetch already PASSED in isolation. This goes straight
- * to the full applyRemoteTexture path, which has internal checkpoint logs (L1..L8 in
- * RemoteTexture.ts). The last "[RT] L#" line before a crash is the exact failing step.
+ * RemoteTexture demo
+ * ==================
+ * Spawns a cube and applies a server-converted texture to it.
+ *
+ *  - TEXTURE_HOST : host of your conversion server (here, a Cloudflare quick tunnel; this
+ *                   URL changes every time cloudflared restarts, so update it then).
+ *  - TEXTURE_PATH : '/tex/<id>.json' for the JSON tier, or '/tex/<id>.zip' for the zip tier.
+ *
+ * The apply is deferred briefly so no blocking network call happens on the load frame.
  */
 
-const TEXTURE_HOST = 'october-explained-teaches-yale.trycloudflare.com'; // update if cloudflared restarted
+const TEXTURE_HOST = 'october-explained-teaches-yale.trycloudflare.com';
 const TEXTURE_PATH = '/tex/brick_01.json';
 
 let cube: Entity | undefined;
@@ -27,7 +31,6 @@ registerStart(start);
 
 function start() {
   inWorldConsole.visible(true, new Vector3(0, 2, -2));
-  console.log('[RT] 0 world loaded');
 
   cube = spawnPrimitive.cube(
     new Vector3(-1.3, 1.4, -1.4),
@@ -39,16 +42,14 @@ function start() {
     'Static',
     undefined,
   );
-  console.log('[RT] 1 cube spawned');
 
-  Async.setTimeout(go, 2000);
+  Async.setTimeout(applyTexture, 500);
 }
 
-function go() {
+function applyTexture() {
   if (!cube) { return; }
 
-  console.log('[RT] 9 applyRemoteTexture (watch L1..L8)');
-  applyRemoteTexture(cube, TEXTURE_HOST, TEXTURE_PATH, { useMipMaps: false, pixelsPerFrame: 1024 })
-    .then(() => { console.log('[RT] DONE -> cube should be BRICK'); })
-    .catch((e) => { console.log('[RT] ERR ' + e); });
+  applyRemoteTexture(cube, TEXTURE_HOST, TEXTURE_PATH, { useMipMaps: false })
+    .then(() => { console.log('RemoteTexture: applied ' + TEXTURE_PATH); })
+    .catch((e) => { console.log('RemoteTexture: ' + e); });
 }

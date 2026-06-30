@@ -156,27 +156,20 @@ function loadTextureFromURL(host: string, path: string, opts: RemoteTexOptions =
     }
   }
 
-  console.log('[RT] L1 payload validated'); // DIAGNOSTIC
-
   const indices = decodeIndices(payload);
   if (!indices) {
     return Promise.reject(new Error('RemoteTexture: index decode failed'));
   }
-  console.log('[RT] L2 decoded ' + indices.length + ' indices'); // DIAGNOSTIC
 
   const flipY = opts.flipY !== undefined ? opts.flipY : (payload.flipY === true);
   const buckets = bucketByPalette(payload, indices, flipY);
-  console.log('[RT] L3 bucketed into ' + buckets.length + ' colors'); // DIAGNOSTIC
 
   const tex = new Texture(payload.w, payload.h);
-  console.log('[RT] L4 texture created id=' + tex.imageID + ' ' + payload.w + 'x' + payload.h); // DIAGNOSTIC
   const useMipMaps = opts.useMipMaps !== undefined ? opts.useMipMaps : true;
   const pixelsPerFrame = Math.max(64, opts.pixelsPerFrame !== undefined ? opts.pixelsPerFrame : 2048);
 
   return rebuildAcrossFrames(tex, payload, buckets, pixelsPerFrame).then(() => {
-    console.log('[RT] L7 rebuild loop finished, calling updateTexture'); // DIAGNOSTIC
     tex.updateTexture();
-    console.log('[RT] L8 updateTexture done'); // DIAGNOSTIC
     if (useMipMaps) { tex.updateMipMaps(); }
 
     if (payload.hash) {
@@ -385,7 +378,6 @@ function rebuildAcrossFrames(tex: Texture, p: YuuTexturePayload, buckets: number
 
       if (bucketIndex >= buckets.length) {
         finished = true;
-        console.log('[RT] L6 rebuild loop done'); // DIAGNOSTIC
 
         // IMPORTANT: never unsubscribe from inside the running onUpdate callback - removing
         // a frame callback during its own dispatch crashes the engine. Defer it to a timer
