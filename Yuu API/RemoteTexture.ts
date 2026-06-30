@@ -1,3 +1,4 @@
+import { Async } from "./Async";
 import { Color } from "./Basic Types/Color";
 import { Vector2 } from "./Basic Types/Vector2";
 import { Entity } from "./Entity";
@@ -342,15 +343,18 @@ function rebuildAcrossFrames(tex: Texture, p: YuuTexturePayload, buckets: number
   return new Promise<void>((resolve) => {
     let bucketIndex = 0; // which palette color we're on
     let offset = 0;      // pixels already written within the current bucket
-    let call = 0;        // DIAGNOSTIC: setPixelsColor call counter
+    let finished = false;
+    let subId = -1;
 
-    const subId = Events.onUpdate(() => {
+    const tick = () => {
+      if (finished) { return; } // guard against any extra dispatch before unsubscribe lands
+
       let budget = pixelsPerFrame;
 
       // Write up to `pixelsPerFrame` pixels this frame, in chunks no bigger than the
       // budget, walking from one palette color to the next. This keeps both the
       // allocation and the native setPixelsColor call small even for a 1-color image
-      // that covers the whole texture (the case that crashed the app).
+      // that covers the whole texture.
       while (budget > 0 && bucketIndex < buckets.length) {
         const flat = buckets[bucketIndex];
         const totalPixels = flat.length >> 1;
@@ -373,8 +377,6 @@ function rebuildAcrossFrames(tex: Texture, p: YuuTexturePayload, buckets: number
           coords.push(new Vector2(flat[k], flat[k + 1]));
         }
 
-        call++;
-        console.log('[RT] L5 setPixelsColor call ' + call + ' color ' + bucketIndex + ' n=' + coords.length); // DIAGNOSTIC
         tex.setPixelsColor(coords, color, alpha);
 
         offset += take;
@@ -382,11 +384,20 @@ function rebuildAcrossFrames(tex: Texture, p: YuuTexturePayload, buckets: number
       }
 
       if (bucketIndex >= buckets.length) {
-        console.log('[RT] L6 all ' + call + ' setPixelsColor calls done'); // DIAGNOSTIC
-        Events.unsubscribe(subId);
+        finished = true;
+        console.log('[RT] L6 rebuild loop done'); // DIAGNOSTIC
+
+        // IMPORTANT: never unsubscribe from inside the running onUpdate callback - removing
+        // a frame callback during its own dispatch crashes the engine. Defer it to a timer
+        // so it runs outside the dispatch.
+        const idToStop = subId;
+        Async.setTimeout(() => { Events.unsubscribe(idToStop); }, 0);
+
         resolve();
       }
-    });
+    };
+
+    subId = Events.onUpdate(tick);
   });
 }
 
