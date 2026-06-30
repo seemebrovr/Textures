@@ -38,8 +38,9 @@ export interface RemoteTexOptions {
   tier?: TextureTier;
   /** Generate mip maps after rebuild (smoother at distance). Default true. */
   useMipMaps?: boolean;
-  /** How many palette buckets to write per frame while rebuilding. Default 16. */
-  rebuildBudgetPerFrame?: number;
+  /** How many PIXELS to write per frame while rebuilding (also caps each setPixelsColor
+   *  call). Lower = gentler on the engine, more frames. Default 2048. */
+  pixelsPerFrame?: number;
   /** Override the payload's flipY (row origin). Default: use the payload's value. */
   flipY?: boolean;
 }
@@ -164,9 +165,9 @@ function loadTextureFromURL(host: string, path: string, opts: RemoteTexOptions =
 
   const tex = new Texture(payload.w, payload.h);
   const useMipMaps = opts.useMipMaps !== undefined ? opts.useMipMaps : true;
-  const budget = Math.max(1, opts.rebuildBudgetPerFrame !== undefined ? opts.rebuildBudgetPerFrame : 16);
+  const pixelsPerFrame = Math.max(64, opts.pixelsPerFrame !== undefined ? opts.pixelsPerFrame : 2048);
 
-  return rebuildAcrossFrames(tex, payload, buckets, budget).then(() => {
+  return rebuildAcrossFrames(tex, payload, buckets, pixelsPerFrame).then(() => {
     tex.updateTexture();
     if (useMipMaps) { tex.updateMipMaps(); }
 
@@ -330,34 +331,47 @@ function bucketByPalette(p: YuuTexturePayload, indices: Uint8Array, flipY: boole
 // ---------------------------------------------------------------------------
 // Rebuild, spread across frames (Contract 5.5). One batched setPixelsColor per color.
 // ---------------------------------------------------------------------------
-function rebuildAcrossFrames(tex: Texture, p: YuuTexturePayload, buckets: number[][], budget: number): Promise<void> {
+function rebuildAcrossFrames(tex: Texture, p: YuuTexturePayload, buckets: number[][], pixelsPerFrame: number): Promise<void> {
   return new Promise<void>((resolve) => {
-    let next = 0;
+    let bucketIndex = 0; // which palette color we're on
+    let offset = 0;      // pixels already written within the current bucket
 
     const subId = Events.onUpdate(() => {
-      let processed = 0;
+      let budget = pixelsPerFrame;
 
-      while (next < buckets.length && processed < budget) {
-        const flat = buckets[next];
+      // Write up to `pixelsPerFrame` pixels this frame, in chunks no bigger than the
+      // budget, walking from one palette color to the next. This keeps both the
+      // allocation and the native setPixelsColor call small even for a 1-color image
+      // that covers the whole texture (the case that crashed the app).
+      while (budget > 0 && bucketIndex < buckets.length) {
+        const flat = buckets[bucketIndex];
+        const totalPixels = flat.length >> 1;
 
-        if (flat.length > 0) {
-          const c = p.palette[next];
-          const color = new Color(byteToUnit(c[0]), byteToUnit(c[1]), byteToUnit(c[2]));
-          const alpha = byteToUnit(c.length > 3 ? c[3] : 255);
-
-          const coords: Vector2[] = [];
-          for (let k = 0; k < flat.length; k += 2) {
-            coords.push(new Vector2(flat[k], flat[k + 1]));
-          }
-
-          tex.setPixelsColor(coords, color, alpha);
+        if (offset >= totalPixels) {
+          bucketIndex++;
+          offset = 0;
+          continue;
         }
 
-        next++;
-        processed++;
+        const c = p.palette[bucketIndex];
+        const color = new Color(byteToUnit(c[0]), byteToUnit(c[1]), byteToUnit(c[2]));
+        const alpha = byteToUnit(c.length > 3 ? c[3] : 255);
+
+        const take = Math.min(totalPixels - offset, budget);
+        const coords: Vector2[] = [];
+        const start = offset * 2;
+        const end = (offset + take) * 2;
+        for (let k = start; k < end; k += 2) {
+          coords.push(new Vector2(flat[k], flat[k + 1]));
+        }
+
+        tex.setPixelsColor(coords, color, alpha);
+
+        offset += take;
+        budget -= take;
       }
 
-      if (next >= buckets.length) {
+      if (bucketIndex >= buckets.length) {
         Events.unsubscribe(subId);
         resolve();
       }
