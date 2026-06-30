@@ -199,36 +199,23 @@ function getShadeSmoothStretchedUVCube(): [Vector3[], Vector2[], number[]] {
       new Vector3(0.5, -0.5, -0.5), //Bottom Forward Left
     ];
 
+    // Each face maps to the FULL image [0..1] (was a cube-net unwrap that sliced the
+    // image across faces). Per-face corner order preserved from the net so the main
+    // faces aren't mirrored/upside-down. Scaling the object now stretches the whole
+    // image on each face.
     const uvs: Vector2[] = [
-      new Vector2(0.5, 1 - 0.125),
-      new Vector2(0.75, 1 - 0.125),
-      new Vector2(0.5, 1 - 0.375),
-      new Vector2(0.75, 1 - 0.375),
-
-      new Vector2(0.5, 1 - 0.875),
-      new Vector2(0.75, 1 - 0.875),
-      new Vector2(0.5, 1 - 0.625),
-      new Vector2(0.75, 1 - 0.625),
-
-      new Vector2(0.5, 1 - 0.375),
-      new Vector2(0.75, 1 - 0.375),
-      new Vector2(0.5, 1 - 0.625),
-      new Vector2(0.75, 1 - 0.625),
-
-      new Vector2(0.75, 1 - 0.375),
-      new Vector2(upperValue, 1 - 0.375),
-      new Vector2(0.75, 1 - 0.625),
-      new Vector2(upperValue, 1 - 0.625),
-
-      new Vector2(0.25, 1 - 0.375),
-      new Vector2(0.5, 1 - 0.375),
-      new Vector2(0.25, 1 - 0.625),
-      new Vector2(0.5, 1 - 0.625),
-
-      new Vector2(lowerValue, 1 - 0.375),
-      new Vector2(0.25, 1 - 0.375),
-      new Vector2(lowerValue, 1 - 0.625),
-      new Vector2(0.25, 1 - 0.625),
+      // Top
+      new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, 0), new Vector2(1, 0),
+      // Bottom
+      new Vector2(0, 0), new Vector2(1, 0), new Vector2(0, 1), new Vector2(1, 1),
+      // Back
+      new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, 0), new Vector2(1, 0),
+      // Right
+      new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, 0), new Vector2(1, 0),
+      // Left
+      new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, 0), new Vector2(1, 0),
+      // Front
+      new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, 0), new Vector2(1, 0),
     ];
 
     const triangles: number[] = [
