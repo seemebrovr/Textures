@@ -1,9 +1,11 @@
 import { Async } from "./Yuu API/Async";
 import { Color } from "./Yuu API/Basic Types/Color";
 import { Quaternion } from "./Yuu API/Basic Types/Quaternion";
+import { Vector2 } from "./Yuu API/Basic Types/Vector2";
 import { Vector3 } from "./Yuu API/Basic Types/Vector3";
 import { inWorldConsole } from "./Yuu API/Console";
 import { Entity } from "./Yuu API/Entity";
+import { http } from "./Yuu API/Networking/http";
 import { registerStart } from "./Yuu API/RegisterStart";
 import { applyRemoteTexture, fetchManifest } from "./Yuu API/RemoteTexture";
 import { spawnPrimitive } from "./Yuu API/SpawnPrimitive";
@@ -11,20 +13,14 @@ import { Texture } from "./Yuu API/Texture";
 
 
 /**
- * RemoteTexture DIAGNOSTIC demo
- * =============================
- * Walks through the pipeline in stages, AFTER the world has loaded, with numbered
- * logs and pauses between stages so the in-world console shows how far it gets before
- * any crash. Whatever the LAST "[RT] N ..." line you see is, that's the step that failed.
+ * RemoteTexture DIAGNOSTIC v2
+ * ===========================
+ * Stage 6 (fill+apply) and stage 8 (network) already PASSED. This isolates the remaining
+ * suspects with pauses + numbered logs. Whatever the LAST "[RT] N" line is = the culprit.
  *
- * Stage map:
- *   0,1  world load + spawn cube              (no texture/network yet)
- *   2-6  LOCAL texture: create, fill, update, apply   (NO networking, NO per-pixel loop)
- *   7,8  NETWORK: fetch the manifest only     (the blocking HTTP call, deferred off load)
- *   9,10 REMOTE: full fetch + rebuild + apply (gentle: mipmaps off, 1024 px/frame)
- *
- * If the cube turns BLUE you know local textures work; if it then turns BRICK the whole
- * path works. Tell me the last [RT] number you saw.
+ *   6a-6c  setPixelsColor PROBE on a local texture (NO network) - the prime suspect
+ *   8a-8b  fetch the brick payload by itself (getJson only, NO texture build)
+ *   9-10   the full applyRemoteTexture path
  */
 
 const TEXTURE_HOST = 'describing-conservation-refer-johns.trycloudflare.com'; // update if cloudflared restarted
@@ -41,8 +37,9 @@ function start() {
   inWorldConsole.visible(true, new Vector3(0, 2, -2));
   log('0 world loaded');
 
+  // Off to the LEFT so it doesn't block the console.
   cube = spawnPrimitive.cube(
-    new Vector3(0, 1.5, -1.5),
+    new Vector3(-1.3, 1.4, -1.4),
     new Vector3(0.5, 0.5, 0.5),
     Quaternion.one,
     new Color(1, 1, 1),
@@ -53,43 +50,58 @@ function start() {
   );
   log('1 cube spawned');
 
-  // Defer all texture/network work off the load frame.
-  Async.setTimeout(stageLocalTexture, 2000);
+  Async.setTimeout(stageSetPixelsProbe, 2000);
 }
 
 
-// Stage A - purely local texture. No networking, no per-pixel loop.
-function stageLocalTexture() {
+// PROBE: does Godot.image.setPixelsColor crash? Local only, no network, no decode.
+function stageSetPixelsProbe() {
   if (!cube) { return; }
 
-  log('2 creating local 64x64 texture');
+  log('6a setPixelsColor probe: build 1024 coords');
   const tex = new Texture(64, 64);
-  log('3 texture created id=' + tex.imageID);
+  tex.fillWithColor(new Color(0.2, 0.5, 1), 1); // blue base
 
-  tex.fillWithColor(new Color(0.2, 0.5, 1), 1);
-  log('4 filled blue');
-
+  const coords: Vector2[] = [];
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 32; x++) {
+      coords.push(new Vector2(x, y)); // a 32x32 = 1024 px block, all in-bounds
+    }
+  }
+  log('6b calling setPixelsColor with ' + coords.length + ' px');
+  tex.setPixelsColor(coords, new Color(1, 0.2, 0.2), 1); // red block
   tex.updateTexture();
-  log('5 updateTexture ok');
-
-  cube.mesh.texture.set(tex, false); // mipmaps off
-  log('6 applied -> cube should be BLUE');
+  cube.mesh.texture.set(tex, false);
+  log('6c probe ok -> cube blue with a RED corner');
 
   Async.setTimeout(stageManifest, 3000);
 }
 
 
-// Stage B - networking only (the blocking HTTP GET), well after load.
 function stageManifest() {
   log('7 fetching manifest...');
   const manifest = fetchManifest(TEXTURE_HOST);
   log('8 manifest ok: ' + manifest.length + ' texture(s)');
 
+  Async.setTimeout(stagePayloadOnly, 3000);
+}
+
+
+// Fetch the brick payload by itself - tests getJson on the larger object, no texture build.
+function stagePayloadOnly() {
+  log('8a fetching payload (getJson only)...');
+  const p = http.getJson<{ w: number; h: number; paletteCount: number; encoding: string; pixels: string }>(TEXTURE_HOST, TEXTURE_PATH);
+  if (!p) {
+    log('8b payload UNDEFINED (fetch returned nothing)');
+  }
+  else {
+    log('8b payload ok: ' + p.w + 'x' + p.h + ' pal=' + p.paletteCount + ' enc=' + p.encoding + ' pixlen=' + (p.pixels ? p.pixels.length : 0));
+  }
+
   Async.setTimeout(stageRemote, 3000);
 }
 
 
-// Stage C - full remote texture, gentlest settings.
 function stageRemote() {
   if (!cube) { return; }
 
