@@ -17,7 +17,7 @@ import { spawnPrimitive } from "./Yuu API/SpawnPrimitive";
  * If the server is unreachable the cube still spawns; the failure is logged, not fatal.
  */
 
-const TEXTURE_HOST = '192.168.1.228:8080'; // host[:port] of the conversion server (PC LAN IP, reachable from the headset)
+const TEXTURE_HOST = 'describing-conservation-refer-johns.trycloudflare.com'; // HTTPS tunnel -> local serve.py:8080 (temporary; changes if cloudflared restarts)
 const TEXTURE_PATH = '/tex/brick_01.json'; // .json -> json tier; use /tex/<id>.zip for the zip tier
 
 
